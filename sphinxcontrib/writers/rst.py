@@ -58,13 +58,20 @@ class RstTranslator(TextTranslator):
         self.states = [[]]
         self.stateindent = [0]
         self.list_counter = []
+        # flag for tracking brackets in literals
+        # e.g. list[str] -> *list[str]* rather than 
+        # *list**[**str**]*
+        self.literal_subtype_closed = True
         self.sectionlevel = 0
         self.table = None
         if self.builder.config.rst_indent:
             self.indent = self.builder.config.rst_indent
         else:
             self.indent = STDINDENT
-        self.wrapper = textwrap.TextWrapper(width=STDINDENT, break_long_words=False, break_on_hyphens=False)
+        self.wrapper = textwrap.TextWrapper(
+            width=STDINDENT,
+            break_long_words=False,
+            break_on_hyphens=False)
 
     def log_unknown(self, type, node):
         logger = logging.getLogger("sphinxcontrib.writers.rst")
@@ -80,6 +87,10 @@ class RstTranslator(TextTranslator):
 
     def add_text(self, text):
         self.states[-1].append((-1, text))
+    def remove_text(self, text):
+        if self.states[-1][-1] == (-1, text):
+            self.states[-1].pop()
+
     def new_state(self, indent=STDINDENT):
         self.states.append([])
         self.stateindent.append(indent)
@@ -140,25 +151,6 @@ class RstTranslator(TextTranslator):
     visit_sidebar = visit_topic
     depart_sidebar = depart_topic
 
-    def visit_rubric(self, node):
-        self.new_state(0)
-        self.add_text('-[ ')
-    def depart_rubric(self, node):
-        self.add_text(' ]-')
-        self.end_state()
-
-    def visit_compound(self, node):
-        # self.log_unknown("compount", node)
-        pass
-    def depart_compound(self, node):
-        pass
-
-    def visit_glossary(self, node):
-        # self.log_unknown("glossary", node)
-        pass
-    def depart_glossary(self, node):
-        pass
-
     def visit_title(self, node):
         if isinstance(node.parent, nodes.Admonition):
             self.add_text(node.astext()+': ')
@@ -172,17 +164,6 @@ class RstTranslator(TextTranslator):
         text = ''.join(x[1] for x in self.states.pop() if x[0] == -1)
         self.stateindent.pop()
         self.states[-1].append((0, ['', text, '%s' % (char * len(text)), '']))
-
-    def visit_subtitle(self, node):
-        # self.log_unknown("subtitle", node)
-        pass
-    def depart_subtitle(self, node):
-        pass
-
-    def visit_attribution(self, node):
-        self.add_text('-- ')
-    def depart_attribution(self, node):
-        pass
 
     def visit_desc(self, node):
         self.new_state(0)
@@ -200,48 +181,6 @@ class RstTranslator(TextTranslator):
         else:
             self.add_text('``')
 
-    def visit_desc_name(self, node):
-        # self.log_unknown("desc_name", node)
-        pass
-    def depart_desc_name(self, node):
-        pass
-
-    def visit_desc_addname(self, node):
-        # self.log_unknown("desc_addname", node)
-        pass
-    def depart_desc_addname(self, node):
-        pass
-
-    def visit_desc_type(self, node):
-        # self.log_unknown("desc_type", node)
-        pass
-    def depart_desc_type(self, node):
-        pass
-
-    def visit_desc_returns(self, node):
-        self.add_text(' -> ')
-    def depart_desc_returns(self, node):
-        pass
-
-    def visit_desc_parameterlist(self, node):
-        self.add_text('(')
-        self.first_param = 1
-    def depart_desc_parameterlist(self, node):
-        self.add_text(')')
-
-    def visit_desc_parameter(self, node):
-        if not self.first_param:
-            self.add_text(', ')
-        else:
-            self.first_param = 0
-        self.add_text(node.astext())
-        raise nodes.SkipNode
-
-    def visit_desc_optional(self, node):
-        self.add_text('[')
-    def depart_desc_optional(self, node):
-        self.add_text(']')
-
     def visit_desc_annotation(self, node):
         content = node.astext()
         if len(content) > MAXWIDTH:
@@ -249,8 +188,6 @@ class RstTranslator(TextTranslator):
             content = content[:h] + " ... " + content[-h:]
             self.add_text(content)
             raise nodes.SkipNode
-    def depart_desc_annotation(self, node):
-        pass
 
     def visit_refcount(self, node):
         pass
@@ -705,21 +642,27 @@ class RstTranslator(TextTranslator):
         Finally, all other links are also converted to an inline link
         format.
         """
-        if 'refuri' not in node:
-            self.add_text('`%s`_' % node['name'])
-            raise nodes.SkipNode
-        elif 'internal' not in node:
-            self.add_text('`%s <%s>`_' % (node['name'], node['refuri']))
-            raise nodes.SkipNode
-        elif 'reftitle' in node:
-            # Include node as text, rather than with markup.
-            # reST seems unable to parse a construct like ` ``literal`` <url>`_
-            # Hence we revert to the more simple `literal <url>`_
-            self.add_text('`%s <%s>`_' % (node.astext(), node['refuri']))
-            # self.end_state(wrap=False)
-            raise nodes.SkipNode
+        # this was only checking refuri originally
+        # I didn't delve into the distinctions; this mostly
+        # works thus far
+        if 'refuri' in node or 'refid' in node:
+            ref_link = node.get('refuri', node.get('refid'))
+            if 'internal' not in node:
+                # no name -> use link as text
+                self.add_text('`%s <%s>`_' % (node.get('name', node.get('refuri', '')), ref_link))
+                raise nodes.SkipNode
+            elif 'reftitle' in node:
+                # Include node as text, rather than with markup.
+                # reST seems unable to parse a construct like ` ``literal`` <url>`_
+                # Hence we revert to the more simple `literal <url>`_
+                self.add_text('`%s <%s>`_' % (node.astext(), ref_link))
+                # self.end_state(wrap=False)
+                raise nodes.SkipNode
+            else:
+                self.add_text('`%s <%s>`_' % (node.astext(), ref_link))
+                raise nodes.SkipNode
         else:
-            self.add_text('`%s <%s>`_' % (node.astext(), node['refuri']))
+            self.add_text('`%s`_' % node['name'])
             raise nodes.SkipNode
 
     def depart_reference(self, node):
@@ -736,66 +679,34 @@ class RstTranslator(TextTranslator):
     def depart_download_reference(self, node):
         pass
 
-    def visit_emphasis(self, node):
-        self.add_text('*')
-    def depart_emphasis(self, node):
-        self.add_text('*')
-
     def visit_literal_emphasis(self, node):
-        self.add_text('*')
+        """
+        Overriding parent in order to not add emphasis markers
+        around brackets. It would be better to not turn
+        list[str] into the nodes (list, [, str, ]), but I couldn't
+        figure out where that part was happening so here we are.
+
+        This only works when the close bracket ends the word so
+        that's another reason to figure out how to not break up
+        the words this way.
+        """
+        content = node.astext().strip()
+        if content == '[' and self.states[-1]:
+            self.remove_text('*')
+            self.literal_subtype_closed = False
+        if self.literal_subtype_closed:
+            self.add_text('*')
     def depart_literal_emphasis(self, node):
-        self.add_text('*')
-
-    def visit_strong(self, node):
-        self.add_text('**')
-    def depart_strong(self, node):
-        self.add_text('**')
-
-    def visit_abbreviation(self, node):
-        self.add_text('')
-    def depart_abbreviation(self, node):
-        if node.hasattr('explanation'):
-            self.add_text(' (%s)' % node['explanation'])
-
-    def visit_title_reference(self, node):
-        # self.log_unknown("title_reference", node)
-        self.add_text('*')
-    def depart_title_reference(self, node):
-        self.add_text('*')
+        content = node.astext().strip()
+        if content == ']':
+            self.literal_subtype_closed = True
+        if self.literal_subtype_closed:
+            self.add_text('*')
 
     def visit_literal(self, node):
         self.add_text('``')
     def depart_literal(self, node):
         self.add_text('``')
-
-    def visit_subscript(self, node):
-        self.add_text('_')
-    def depart_subscript(self, node):
-        pass
-
-    def visit_superscript(self, node):
-        self.add_text('^')
-    def depart_superscript(self, node):
-        pass
-
-    def visit_footnote_reference(self, node):
-        self.add_text('[%s]' % node.astext())
-        raise nodes.SkipNode
-
-    def visit_citation_reference(self, node):
-        self.add_text('[%s]' % node.astext())
-        raise nodes.SkipNode
-
-    def visit_Text(self, node):
-        self.add_text(node.astext())
-    def depart_Text(self, node):
-        pass
-
-    def visit_generated(self, node):
-        # self.log_unknown("generated", node)
-        pass
-    def depart_generated(self, node):
-        pass
 
     def visit_inline(self, node):
         # self.log_unknown("inline", node)
@@ -803,22 +714,10 @@ class RstTranslator(TextTranslator):
     def depart_inline(self, node):
         pass
 
-    def visit_problematic(self, node):
-        self.add_text('>>')
-    def depart_problematic(self, node):
-        self.add_text('<<')
-
     def visit_system_message(self, node):
         self.new_state(0)
         self.add_text('<SYSTEM MESSAGE: %s>' % node.astext())
         self.end_state()
-        raise nodes.SkipNode
-
-    def visit_comment(self, node):
-        raise nodes.SkipNode
-
-    def visit_meta(self, node):
-        # only valid for HTML
         raise nodes.SkipNode
 
     def visit_raw(self, node):
