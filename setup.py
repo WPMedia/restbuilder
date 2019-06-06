@@ -19,13 +19,10 @@ file from Sphinx_ and outputs it as reST.
 requires = ['Sphinx>=1.0']
 
 setup(
-    name='sphinxcontrib-restbuilder',
-    version='0.2',
-    url='https://github.com/sphinx-contrib/restbuilder',
-    download_url='http://pypi.python.org/pypi/sphinxcontrib-restbuilder',
-    license='BSD 2-Clause',
-    author='Freek Dijkstra',
-    author_email='freek@macfreek.nl',
+    name='wapo-restbuilder',
+    version='0.0.1',
+    url='https://github.com/WPMedia/restbuilder',
+    author='Arc Professional Services Team',
     description='Sphinx extension to output reST files.',
     long_description=long_desc,
     zip_safe=False,
